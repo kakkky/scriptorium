@@ -7,4 +7,4 @@ zenn.book.create:
 	npx zenn new:book
 
 zenn.preview:
-	npx zenn previe
+	npx zenn preview
