@@ -4,33 +4,39 @@ import (
 	"crypto/rand"
 	"fmt"
 	"runtime"
-	"time"
 )
 
 const MiB = 1024 * 1024
 
 func main() {
-	for i := 1; i <= 10; i++ {
-		var chunks [][]byte
-		for j := 0; j < 300; j++ {
-			c := make([]byte, MiB)
-			_, _ = rand.Read(c)
-			chunks = append(chunks, c)
-		}
-		time.Sleep(50 * time.Millisecond)
-		printStats(i)
-		runtime.KeepAlive(chunks)
+	sizes := []int{
+		200 * MiB,
+		180 * MiB,
+		175 * MiB,
+		140 * MiB,
+		60 * MiB,
+		170 * MiB,
+		40 * MiB,
+		120 * MiB,
+		80 * MiB,
+		150 * MiB,
 	}
-}
 
-func printStats(iter int) {
-	var m runtime.MemStats
-	runtime.ReadMemStats(&m)
+	for iter, size := range sizes {
+		// 指定のサイズのランダムなバイト列を生成
+		buf := make([]byte, size)
+		_, _ = rand.Read(buf)
 
-	fmt.Printf("iter %2d  HeapAlloc=%4dMiB  NextGC=%4dMiB  NumGC=%d\n",
-		iter,
-		m.HeapAlloc/MiB,
-		m.NextGC/MiB,
-		m.NumGC,
-	)
+		// 計測
+		var m runtime.MemStats
+		runtime.ReadMemStats(&m)
+
+		fmt.Printf(
+			"iter %d HeapAlloc=%dMiB NextGC=%dMiB NumGC=%d\n",
+			iter+1,
+			m.HeapAlloc/MiB,
+			m.NextGC/MiB,
+			m.NumGC,
+		)
+	}
 }
