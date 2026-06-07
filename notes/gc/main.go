@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"runtime"
+	"time"
 )
 
 const MiB = 1024 * 1024
@@ -38,5 +39,7 @@ func main() {
 			m.NextGC/MiB,
 			m.NumGC,
 		)
+
+		time.Sleep(2 * time.Minute)
 	}
 }
