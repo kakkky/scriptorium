@@ -13,6 +13,7 @@ https://future-architect.github.io/articles/20260128a/
 https://zenn.dev/magicmoment/articles/goroutine-leak-202312
 
 
+
 「goroutineの停止タイミングがわからないのは設計上の問題」
 
 
@@ -164,3 +165,244 @@ main()
 ```
 
 エラーを上に伝播していくができねーやんという。
+
+-----
+
+で、これらの点を解決するためにpyでやったのがnurseryという。
+
+> every time our control splits into multiple concurrent paths, we want to make sure that they join up again.
+
+分裂した並行処理は最後に合流すべきだという考え。
+
+
+- 明示的なオブジェクト (trio.open_nursery() で生成)
+- async with ブロックに紐づける (字句スコープ強制)
+- 子タスクは nursery.start_soon(func) で起動
+- ブロックを抜けるのは全子タスク完了後
+
+```py
+async with trio.open_nursery() as nursery:
+    nursery.start_soon(work1)
+    nursery.start_soon(work2)
+# ← ここに来た時点で work1, work2 は必ず完了済み
+```
+
+Smith が強調する nursery の 5 性質
+
+1. 字句スコープ束縛 (lexical scoping)
+
+- 子タスクの lifetime は async with ブロックの中 に閉じる
+- 「ブロック抜け = 全完了」 が 言語仕様レベルで保証された不変条件
+- 関数を信頼して「return = 仕事完了」 が再び成立する
+
+2. error 伝播の回復
+
+- 子タスクが exception を上げる → nursery が受け取る → async with
+ブロック外に通常の exception として伝播
+- call stack が再接続される
+- 既存の例外処理機構 (try/except) で扱える
+- traceback / debugger も働く
+
+3. cancel の自動伝播
+
+- 1 つの子が exception を上げた瞬間、 兄弟タスク全員が自動 cancel
+- nursery が cancel されたら → ネストした子 nursery も連鎖 cancel
+- → fail-fast がデフォルトで保証される
+
+
+https://en.wikipedia.org/wiki/Structured_concurrency
+
+
+-----
+
+正直この構造的並行処理は大賛成だが....。
+
+なぜgolangではまだ採用に至っていないのかが気になる。
+
+java
+https://adengineer.internet.gmo/2022/12/13/java-19-structured-concurrency/
+
+# なぜgolangでは構造的並行処理が採用されない？
+いくつかの点が考えられる。
+
+- `Less is exponentially more`というポリシー
+https://commandcenter.blogspot.com/2012/06/less-is-exponentially-more.html
+
+構造的並行処理というのが一個のパラダイムだとすれば、そのパラダイム級の変更をすぐにupdateにのせるのはgolangの思想として合わないんだと思う。
+
+
+
+- そもそもgoという予約語をdeprecatedにできるはずもない
+
+
+他の言語には構造的並行処理が組まれているのにgoにはそれがないことについて驚く人が多いんだと。
+ただ、errgroup(or waitgroup), contextを使えば同じことはできるとある。確かにそう。
+https://rednafi.com/go/structured-concurrency/
+
+以下でgoにおける構造的並行処理について議論されていたっぽい。
+https://github.com/golang/go/issues/29011
+
+提案としては、
+- Go 2 で structured concurrency を採用する提案。 具体案は「go func() が
+  opaque な値を返し、 その変数がスコープを抜ける時に runtime が goroutine
+  完了を待つ」 形 (Trio / Kotlin の lifetime 束縛を Go 風に実装)
+
+クローズ理由は、
+- Ian Lance Taylor が (1) 具体案は既存コード全てを破壊するため
+  non-starter、 (2) 「structured concurrency の領域には良いアイデアがあると思うが、
+  まず幅広いユースケースを列挙する大きな議論が先、 言語変更の具体提案はその後」
+  として 保留扱いで close (拒絶ではなく議論不足を理由に差し戻し)
+- → 8 年経った今もその「大きな議論」 が正式 proposal として戻ってきていない、
+  という構造的停滞の起点になった issue
+
+> また、Trioフォーラムで はGoの状況について議論が交わされている。NJS氏は、構造化並行処理の利点を過大評価することには慎重で、彼らが調査した実際のGoのバグに関する研究では、並行処理バグの約4分の1 （典型的な競合状態）は構造化並行処理では防げなかっただろうと指摘した。しかし、理解するのが最も難しいバグの中には、標準ライブラリモジュールが予期せぬバックグラウンドゴルーチンを生成するものもあったと指摘した。これは、真にスコープ付き並行処理を備えた言語では起こり得ないことだ。また、GoのWaitGroupAPIの使用におけるあらゆるミスは、構造化並行処理によって容易に防げるように思えるとも述べた。
+
+
+> 同じ構造パターンはすべて Go で実現可能です。 errgroup、WaitGroup、context、 チャネルから自分で構築するだけです。これにより、ゴルーチンのライフタイムをより細かく制御できますが、同時にバグが発生する可能性も高くなります
+
+書けるけど書き方によってはミスりがちというのがgolangの構造的並行処理だな。
+>  Go固有の代表的バグパターン
+ - 匿名関数によるデータレース: 親goroutineのローカル変数 (例: ループ変数 i) を子goroutineが共有してしまう (Fig.8)
+ - WaitGroupのAdd/Wait順序ミス: AddがWaitより先に呼ばれる保証がない (Fig.9)
+ - context誤用: タイムアウト分岐で別contextを作ってしまい古いgoroutineに到達不能 (Fig.6)
+ - channelの二重close: panic発生 → sync.Onceで囲って修正 (Fig.10)
+ - selectの非決定性: 複数caseが同時に有効なときどれが選ばれるか不定 (Fig.11)
+ - timeパッケージ起因: time.NewTimerが内部goroutineを起動し、想定外のタイミングでchannelに送信 (Fig.12)
+
+ https://songlh.github.io/paper/go-study.pdf
+
+
+また、構造的並行処理から微々にもズレるが、ランタイムのスケジューラの違いについても記事で触れられている。
+> But as covered earlier, the concurrency paradigms are fundamentally different. Python and Kotlin’s cooperative runtimes can own the cancellation because they own the scheduling. Go’s preemptive scheduler doesn’t know what your goroutine is doing or when it should stop. That’s why cancellation is your job.
+
+協調的スケジューリング：
+```py
+import asyncio
+
+  async def work():
+      print("working...")
+      await asyncio.sleep(10)   # ← await が cancel 注入点 (scheduler が自動)
+      print("done")              # cancel されたら到達しない
+
+  async def main():
+      task = asyncio.create_task(work())
+      await asyncio.sleep(1)
+      task.cancel()              # フラグ立てるだけ、 残りは scheduler が処理
+      try:
+          await task
+      except asyncio.CancelledError:
+          print("cancelled")
+
+  asyncio.run(main())
+
+# 実行結果:
+# working...
+# cancelled
+```
+
+つまり、task自体がawait句で「ここでとまります」をschedulerに教えている。だから scheduler は「今この task は安全に止まってる」 と知っている。
+scheduler が握っているのは 「continuation (続きの情報)」:
+- 「await の戻り値として何を渡せば task が再開できるか」 を抽象的に知っている
+- 言い換えると、 task の 再開インターフェース を持っている
+- このインターフェースは 値を渡す / 例外を投げる の 2 通り選べる
+- → cancel 時は 例外を投げる方を選ぶ
+- task の except 節がそれを受け取って cleanup
+
+先制的スケジューリング(preemptive)：
+```go
+package main
+
+ import (
+     "context"
+     "fmt"
+     "time"
+ )
+
+ func work(ctx context.Context) {
+     fmt.Println("working...")
+     select {
+     case <-time.After(10 * time.Second):
+         fmt.Println("done")
+     case <-ctx.Done():          // ← 開発者が書かないと cancel は届かない
+         return
+     }
+ }
+
+ func main() {
+     ctx, cancel := context.WithCancel(context.Background())
+     go work(ctx)
+     time.Sleep(1 * time.Second)
+     cancel()                     // ctx.Done() を close するだけ
+     time.Sleep(100 * time.Millisecond)
+ }
+
+```
+schedulerは、(表現が怪しいが自律的に)処理が長いやつとか、io待ちに入ってblock状態のタスクをコンテキストスイッチにより入れ替えたりする。
+つまり、taskから通達されるわけではなく半ば強制的に処理を止めたりする。
+task は「自分が止まる」 ことを 構文で表現していない。 scheduler は task の現在状態を 機械レベル (PC、 register) でしか把握してない。 「コード上のどこか」ではなく「機械語命令のどこか」 で止めている。
+
+- Python: await 地点を scheduler が「安全な中断点」 と認識、 cancel 時に 自動で例外を注入 → 開発者は何も書かない
+- Go: scheduler は goroutine の内部状態を知らない、 任意地点での cancel 注入は危険 → runtime は注入しない
+  - → Go では開発者が select { case <-ctx.Done() } を書いて「ここなら止めても安全」 を明示する責任を負う。
+
+
+というかそもそもtaskの性質が異なる。
+- 協調型における task = 「再開可能な計算」 (resumable computation)
+  - 状態遷移機械として実装
+  - 各 await が「次の状態」 への遷移点
+  - scheduler は遷移点で介入できる
+- 先制型における task (= Go goroutine) = 「通常の関数実行」 (procedural execution)
+  - 機械語の連続実行
+  - 中断点は機械が決める、 言語は関与しない
+  - scheduler は機械状態を保存/復元するだけ
+
+
+------
+
+# 3rd partyで構造的並行処理をしてるやつ。
+以下の二つあたり。concが圧倒的。
+
+### conc 
+
+https://github.com/sourcegraph/conc
+https://zenn.dev/kouichi_itagaki/articles/492a55e26c9d86
+
+### nusery
+https://github.com/arunsworld/nursery
+
+# 上二つにどう差別化するか。
+concに対しては、レキシカルスコープで縛って「見やすい」点が挙げられそう。
+
+arunsworld/nursery は、goroutine taskの中で子taskを生成できなさそう。動的task spawnができなさそう？
+```go
+type ConcurrentJob func(context.Context, chan error)
+
+RunConcurrently(
+    // Job 1
+    func(context.Context, chan error) {
+        time.Sleep(time.Millisecond * 10)
+        log.Println("Job 1 done...")
+    },
+    // Job 2
+    func(context.Context, chan error) {
+        time.Sleep(time.Millisecond * 5)
+        log.Println("Job 2 done...")
+    },
+)
+```
+
+やるなら、別scopeができる感じになら。
+```go
+RunConcurrently(
+      func(ctx context.Context, errCh chan error) {
+          dowork()              // 順次実行
+          RunConcurrently(      // dowork 完了後に発火
+              func(ctx, errCh) { jobA() }, // jobA と jobB は
+              func(ctx, errCh) { jobB() }, // 並行 (兄弟)
+          )
+          // ← ここでは jobA, jobB 完了済み
+      },
+  )
+```
+つまり、親 task は、 自分の子 task と並行に走れない。
+親子タスクを並行で処理しつつ、lifetimeを同じscopeで表現する、ができないということ
