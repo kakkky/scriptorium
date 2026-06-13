@@ -406,3 +406,105 @@ RunConcurrently(
 ```
 つまり、親 task は、 自分の子 task と並行に走れない。
 親子タスクを並行で処理しつつ、lifetimeを同じscopeで表現する、ができないということ
+
+------
+どうやるかはまだ詳細詰めてないが、一旦適当に実装ポイントあげてもらった。
+
+1. 全体構造
+
+- Scope 構造体は ctx, cancel, sync.WaitGroup, errOnce, err を持つ
+- Run(ctx, fn) で context.WithCancel から派生 ctx を作って Scope に持たせる
+- defer cancel() で確実に ctx を閉じる
+- closure (= fn) 実行 → wg.Wait() で子完了待ち → error 集約して return
+
+2. closure 形 + Wait 構造的強制
+
+- Run シグネチャを func(ctx, fn) error で固定
+- ユーザーは Wait を直接呼ばない、 Run の return が暗黙の Wait
+- 早期 return / panic でも Run の defer 経由で必ず合流
+- 「Wait 忘れ」 が API surface 上から消える
+
+3. s.Go の実装
+
+- 内部で wg.Add(1) → go func() { defer wg.Done(); ... }()
+- 渡された関数を func(ctx context.Context) error シグネチャで縛る
+- ctx は scope の派生 ctx を自動で渡す → 「ctx 渡し忘れ」 不可能
+
+4. panic recovery
+
+- s.Go 内の goroutine に defer recover() 仕込む
+- recover 値を fmt.Errorf("panic: %v\n%s", r, debug.Stack()) で error 化
+- error 集約パイプラインに流す
+- process kill 防止
+
+5. error 集約 + cancel 伝播
+
+- sync.Once で first error を保存
+- first error 発生時に cancel() を呼ぶ → 兄弟 goroutine に伝播
+- 兄弟は ctx.Done() を観測して停止 (cooperative)
+
+6. 動的 spawn 対応
+
+- s.Go は Run の closure 内 / 子 goroutine 内 / 再帰どこからでも呼べる
+- 重要: wg.Add は wg.Wait 開始後に呼んではダメ という race condition
+  - 対策: closure 内の最初の s.Go で wg.Add する前に wg.Wait は呼ばれない
+  - 親 closure が return するまでは wg.Wait 開始しない設計
+  - 「親 closure → wg.Wait 開始」 のタイミングで残ってる子からの追加は保証される
+
+7. nested scope
+
+- Run 内で別の Run を呼べる
+- 内側 Run の引数 ctx を外側 scope の ctx にする → 親 cancel が子 scope に伝播
+- 内側 scope は独立した cancel/error 境界、 ただし親の影響を受ける
+- 内側 Run が return するまで外側の wg.Wait は完了しない
+
+8. 起源 stack 記録 (本命差別化)
+
+- s.Go 内で runtime.Callers(skip=2, pcs[:8]) で PC を 8 frame 取得
+- skip=2 で runtime.Callers 自身と s.Go を飛ばし、 ユーザー呼び出し位置を取る
+- PC 配列を Scope 内の map に保存 (goroutine id → PC 配列)
+- leak 検知時 / error 報告時に runtime.CallersFrames(pcs).Next() で文字列解決
+
+9. error 集約モード
+
+- Run: first-error-cancels (デフォルト、 errgroup 互換)
+- RunCollect: 全 error を集めて []error で返す
+- RunRace: 1 つでも成功で兄弟 cancel
+- 内部の error 集約戦略をモード別に切り替える
+
+10. scope.Defer (cleanup 順序)
+
+- s.Defer(fn) で「子完了後に実行する cleanup」 を登録
+- 内部の cleanup スライスに push
+- wg.Wait 完了後 → スライス逆順で実行 → Run return
+- 通常の defer より「子完了を待つ」 タイミングが後ろにずれる
+
+11. analyzer (別パッケージ)
+
+- golang.org/x/tools/go/analysis で実装
+- ルール例: 「scope.Run 内 (= closure body 内) で go 文を使ったら警告」
+- AST 走査 + scope の判定 (= ssa の関数境界追跡)
+- staticcheck / golangci-lint プラグイン対応
+
+12. テスト戦略
+
+- 同一 scope 内の s.Go × N で全完了確認
+- panic → error 化の確認
+- 兄弟 cancel 確認 (1 つ失敗で他停止)
+- ctx 観測しない子の hang 確認 (limit timeout 付きテスト)
+- nested scope の cancel 伝播確認
+- 起源 stack の正確性確認 (runtime.Caller で期待 PC と比較)
+
+13. Go 1.26 profile 統合 (将来)
+
+- runtime/pprof の goroutineleak profile を RunTest(t) 内で取得
+- profile から leak goroutine の stack を抽出
+- scope 内部の起源 map と突き合わせ
+- 「この s.Go で生まれた goroutine が leak した」 を t.Fatal に出す
+
+14. ベンチマーク観点
+
+- s.Go × 1M 回 / sec の overhead
+- runtime.Callers 取得コスト (起源報告 on/off の比較)
+- nested scope の cancel 伝播コスト
+- errgroup / conc との 1:1 比較
