@@ -1,12 +1,58 @@
 package main
 
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"sync"
+
+	"github.com/kakkky/scope"
+)
+
 func main() {
+	Scope()
 	// Conc()
-	Nursery()
+	// Nursery()
 }
 
 func Scope() {
+	urls := []string{
+		"https://httpbin.org/delay/1",
+		"https://httpbin.org/delay/2",
+		"https://httpbin.org/status/500",
+	}
 
+	var mu sync.Mutex
+	results := make([]string, 0, len(urls))
+
+	err := scope.Run(context.Background(), func(s *scope.Scope) error {
+		for _, url := range urls {
+			url := url
+			s.Go(func(ctx context.Context) error {
+				req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+				resp, err := http.DefaultClient.Do(req)
+				if err != nil {
+					return err
+				}
+				defer resp.Body.Close()
+
+				if resp.StatusCode >= 500 {
+					return fmt.Errorf("%s: status %d", url, resp.StatusCode)
+				}
+
+				mu.Lock()
+				results = append(results, url)
+				mu.Unlock()
+				return nil
+			})
+		}
+		return nil
+	})
+
+	if err != nil {
+		fmt.Println("error:", err)
+	}
+	fmt.Println("succeeded:", results)
 }
 
 func Nursery() {
