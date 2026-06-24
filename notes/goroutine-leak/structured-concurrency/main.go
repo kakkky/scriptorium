@@ -3,56 +3,130 @@ package main
 import (
 	"context"
 	"fmt"
-	"net/http"
-	"sync"
+	"time"
 
 	"github.com/kakkky/scope"
 )
 
 func main() {
-	Scope()
-	// Conc()
-	// Nursery()
+	ctx := context.Background()
+
+	scope.Run(ctx, func(s *scope.Scope) error {
+		return nil
+	}, scope.WithTimeout(1*time.Second))
+}
+
+func Do(ctx context.Context, fn func() error) error {
+	done := make(chan struct{}, 1)
+	err := fn()
+	select {
+	case <-done:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func dowork() error {
+	time.Sleep(3 * time.Second)
+	fmt.Println("task done")
+	return nil
+}
+
+func ScopeIssue5() {
+	// fmt.Println("=== Case 1: fail-fast (どのタスクが原因か不明) ===")
+	// err := scope.Run(context.Background(), func(s *scope.Scope) error {
+	// 	s.Go(func(ctx context.Context) error {
+	// 		time.Sleep(10 * time.Millisecond)
+	// 		return errors.New("network failure") // taskA が失敗
+	// 	})
+	// 	s.Go(func(ctx context.Context) error {
+	// 		<-ctx.Done()
+	// 		// なぜキャンセルされたか分からない
+	// 		fmt.Println("taskB cancelled, cause:", ctx.Err()) // → "context canceled" しか分からない
+	// 		return ctx.Err()
+	// 	})
+	// 	s.Go(func(ctx context.Context) error {
+	// 		<-ctx.Done()
+	// 		fmt.Println("taskC cancelled, cause:", ctx.Err()) // → 同上
+	// 		return ctx.Err()
+	// 	})
+	// 	return nil
+	// })
+	// fmt.Println("Run returned:", err) // "network failure" だが、どのタスクかは err の中身を見るしかない
+
+	// fmt.Println()
+	// fmt.Println("=== Case 2: supervisor mode (なぜスコープが終わったか不明) ===")
+	// err = scope.Run(context.Background(), func(s *scope.Scope) error {
+	// 	s.Go(func(ctx context.Context) error {
+	// 		return errors.New("timeout") // 失敗しても他を止めない
+	// 	})
+	// 	s.Go(func(ctx context.Context) error {
+	// 		time.Sleep(20 * time.Millisecond)
+	// 		return nil
+	// 	})
+	// 	return nil
+	// }, scope.WithSupervisor())
+	// // err には "timeout" が入るが、「supervisorだから続行した」という情報はない
+	// fmt.Println("Run returned:", err)
+
+	// fmt.Println()
+	// fmt.Println("=== Case 3: 親からのキャンセル伝播 ===")
+	// parentCtx, parentCancel := context.WithCancel(context.Background())
+	// go func() {
+	// 	time.Sleep(15 * time.Millisecond)
+	// 	parentCancel() // 親がキャンセル
+	// }()
+	// err = scope.Run(parentCtx, func(s *scope.Scope) error {
+	// 	s.Go(func(ctx context.Context) error {
+	// 		<-ctx.Done()
+	// 		// タスク自身のエラーか、親からの伝播か区別できない
+	// 		fmt.Println("task cancelled, cause:", ctx.Err()) // → "context canceled"
+	// 		return ctx.Err()
+	// 	})
+	// 	return nil
+	// })
+	// fmt.Println("Run returned:", err)
 }
 
 func Scope() {
-	urls := []string{
-		"https://httpbin.org/delay/1",
-		"https://httpbin.org/delay/2",
-		"https://httpbin.org/status/500",
-	}
+	// urls := []string{
+	// 	"https://httpbin.org/delay/1",
+	// 	"https://httpbin.org/delay/2",
+	// 	"https://httpbin.org/status/500",
+	// }
 
-	var mu sync.Mutex
-	results := make([]string, 0, len(urls))
+	// var mu sync.Mutex
+	// results := make([]string, 0, len(urls))
 
-	err := scope.Run(context.Background(), func(s *scope.Scope) error {
-		for _, url := range urls {
-			url := url
-			s.Go(func(ctx context.Context) error {
-				req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-				resp, err := http.DefaultClient.Do(req)
-				if err != nil {
-					return err
-				}
-				defer resp.Body.Close()
+	// err := scope.Run(context.Background(), func(s *scope.Scope) error {
+	// 	for _, url := range urls {
+	// 		url := url
+	// 		s.Go(func(ctx context.Context) error {
+	// 			req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	// 			resp, err := http.DefaultClient.Do(req)
+	// 			if err != nil {
+	// 				return err
+	// 			}
+	// 			defer resp.Body.Close()
 
-				if resp.StatusCode >= 500 {
-					return fmt.Errorf("%s: status %d", url, resp.StatusCode)
-				}
+	// 			if resp.StatusCode >= 500 {
+	// 				return fmt.Errorf("%s: status %d", url, resp.StatusCode)
+	// 			}
 
-				mu.Lock()
-				results = append(results, url)
-				mu.Unlock()
-				return nil
-			})
-		}
-		return nil
-	})
+	// 			mu.Lock()
+	// 			results = append(results, url)
+	// 			mu.Unlock()
+	// 			return nil
+	// 		})
+	// 	}
+	// 	return nil
+	// })
 
-	if err != nil {
-		fmt.Println("error:", err)
-	}
-	fmt.Println("succeeded:", results)
+	// if err != nil {
+	// 	fmt.Println("error:", err)
+	// }
+	// fmt.Println("succeeded:", results)
 }
 
 func Nursery() {
