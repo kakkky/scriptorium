@@ -5,33 +5,39 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/kakkky/scope"
+	"github.com/arunsworld/nursery"
 )
 
 func main() {
-	ctx := context.Background()
-
-	scope.Run(ctx, func(s *scope.Scope) error {
-		return nil
-	}, scope.WithTimeout(1*time.Second))
+	hoge()
+	fmt.Println("foo completed")
 }
 
-func Do(ctx context.Context, fn func() error) error {
-	done := make(chan struct{}, 1)
-	err := fn()
-	select {
-	case <-done:
-		return err
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+func hoge() {
+	go panicTask()
+	time.Sleep(time.Second)
 }
 
-func dowork() error {
-	time.Sleep(3 * time.Second)
-	fmt.Println("task done")
-	return nil
+func panicTask() {
+	panic("something went wrong")
 }
+
+// func Do(ctx context.Context, fn func() error) error {
+// 	done := make(chan struct{}, 1)
+// 	err := fn()
+// 	select {
+// 	case <-done:
+// 		return err
+// 	case <-ctx.Done():
+// 		return ctx.Err()
+// 	}
+// }
+
+// func dowork() error {
+// 	time.Sleep(3 * time.Second)
+// 	fmt.Println("task done")
+// 	return nil
+// }
 
 func ScopeIssue5() {
 	// fmt.Println("=== Case 1: fail-fast (どのタスクが原因か不明) ===")
@@ -130,16 +136,16 @@ func Scope() {
 }
 
 func Nursery() {
-	// nursery.RunConcurrently(
-	// 	func(ctx context.Context, errCh chan error) {
-	// 		time.Sleep(100 * time.Millisecond)
-	// 		fmt.Println("job 1 done")
-	// 	},
-	// 	func(ctx context.Context, errCh chan error) {
-	// 		time.Sleep(100 * time.Millisecond)
-	// 		fmt.Println("job 2 done")
-	// 	},
-	// )
+	nursery.RunConcurrently(
+		func(ctx context.Context, errCh chan error) {
+			time.Sleep(100 * time.Millisecond)
+			fmt.Println("job 1 done")
+		},
+		func(ctx context.Context, errCh chan error) {
+			time.Sleep(100 * time.Millisecond)
+			fmt.Println("job 2 done")
+		},
+	)
 
 	// nursery.RunConcurrently(
 	// 	func(ctx context.Context, errCh chan error) {
