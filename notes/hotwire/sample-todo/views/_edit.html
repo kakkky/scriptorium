@@ -1,0 +1,12 @@
+{{define "todo_edit"}}
+<turbo-frame id="todo_{{.ID}}">
+  <form action="/todos/{{.ID}}" method="post" class="edit">
+    <input type="text" name="title" value="{{.Title}}" required>
+    <label>
+      <input type="checkbox" name="done" value="1" {{if .Done}}checked{{end}}> 完了
+    </label>
+    <button type="submit">保存</button>
+    <a href="/todos/{{.ID}}">キャンセル</a>
+  </form>
+</turbo-frame>
+{{end}}

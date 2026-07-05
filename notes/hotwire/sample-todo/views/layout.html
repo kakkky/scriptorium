@@ -1,0 +1,82 @@
+{{define "layout"}}<!doctype html>
+<html lang="ja">
+    <head>
+        <meta charset="utf-8" />
+        <title>Hotwire Sample Todo</title>
+        <script type="module" src="/assets/app.js"></script>
+        <style>
+            body {
+                font-family: sans-serif;
+                max-width: 640px;
+                margin: 40px auto;
+                padding: 0 16px;
+            }
+            nav {
+                margin-bottom: 24px;
+                border-bottom: 1px solid #ddd;
+                padding-bottom: 8px;
+            }
+            nav a {
+                margin-right: 16px;
+                color: #0366d6;
+                text-decoration: none;
+            }
+            nav a:hover {
+                text-decoration: underline;
+            }
+            .todos {
+                padding: 0;
+            }
+            .todo {
+                display: flex;
+                gap: 8px;
+                align-items: center;
+                padding: 8px 0;
+                border-bottom: 1px solid #eee;
+            }
+            .todo.done .title {
+                text-decoration: line-through;
+                color: #888;
+            }
+            .todo .title {
+                flex-grow: 1;
+            }
+            .todo a,
+            .todo button {
+                font-size: 12px;
+            }
+            .edit {
+                display: flex;
+                gap: 8px;
+                align-items: center;
+                padding: 8px 0;
+                border-bottom: 1px solid #eee;
+            }
+            .edit input[type="text"] {
+                flex-grow: 1;
+            }
+            form.new {
+                display: flex;
+                gap: 8px;
+                margin-bottom: 16px;
+            }
+            form.new input[type="text"] {
+                flex-grow: 1;
+                padding: 4px;
+            }
+        </style>
+    </head>
+    <body>
+        <nav>
+            <a href="/">Todos</a>
+            <a href="/about">About</a>
+        </nav>
+
+        <turbo-stream-source
+            src="ws://localhost:8080/events/ws"
+        ></turbo-stream-source>
+
+        {{block "content" .}}{{end}}
+    </body>
+</html>
+{{end}}

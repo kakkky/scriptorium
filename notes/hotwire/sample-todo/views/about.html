@@ -1,0 +1,10 @@
+{{define "content"}}
+<h1>About</h1>
+<p>Hotwire (Turbo + Stimulus) を Go の <code>html/template</code> で使うサンプル。</p>
+<ul>
+  <li><strong>Turbo Drive</strong>: 上のナビゲーションリンクの遷移がフルリロードなしで動くのを DevTools の Network タブで確認できる (`fetch` になっている)。</li>
+  <li><strong>Turbo Frame</strong>: Todos ページで「編集」を押すと、その行だけが編集フォームに置き換わる (ページの他部分は動かない)。</li>
+  <li><strong>Turbo Stream</strong>: Todo の追加・チェック・削除は全てサーバーが <code>&lt;turbo-stream&gt;</code> を返して部分更新している。</li>
+  <li><strong>Stimulus</strong>: 追加フォームの「クリア」ボタンは Stimulus controller 経由で入力欄を空にする。</li>
+</ul>
+{{end}}

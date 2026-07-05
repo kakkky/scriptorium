@@ -1,0 +1,15 @@
+{{define "content"}}
+<h1>Todos</h1>
+
+<form action="/todos" method="post" class="new" data-controller="clear-input" data-reset-on-submit>
+  <input type="text" name="title" required data-clear-input-target="input" placeholder="やることを追加">
+  <button type="submit">追加</button>
+  <button type="button" data-action="click->clear-input#clear">クリア</button>
+</form>
+
+<div class="todos" id="todos">
+  {{range .Todos}}
+    {{template "todo_item" .}}
+  {{end}}
+</div>
+{{end}}

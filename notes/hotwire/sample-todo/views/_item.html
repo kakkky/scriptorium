@@ -1,0 +1,14 @@
+{{define "todo_item"}}
+<turbo-frame id="todo_{{.ID}}">
+  <div class="todo {{if .Done}}done{{end}}">
+    <form action="/todos/{{.ID}}/toggle" method="post" style="display:inline;margin:0">
+      <input type="checkbox" onchange="this.form.requestSubmit()" {{if .Done}}checked{{end}}>
+    </form>
+    <span class="title">{{.Title}}</span>
+    <a href="/todos/{{.ID}}/edit">編集</a>
+    <form action="/todos/{{.ID}}/delete" method="post" style="display:inline;margin:0">
+      <button type="submit">削除</button>
+    </form>
+  </div>
+</turbo-frame>
+{{end}}

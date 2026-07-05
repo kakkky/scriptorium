@@ -1,0 +1,6 @@
+{{define "stream_toggle"}}<turbo-stream action="replace" target="todo_{{.ID}}">
+  <template>
+    {{template "todo_item" .}}
+  </template>
+</turbo-stream>
+{{end}}

@@ -1,0 +1,3 @@
+package hotwire
+
+func main() {}

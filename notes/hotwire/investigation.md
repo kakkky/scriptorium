@@ -187,7 +187,8 @@ https://github.com/wolfeidau/hotwire-golang-website
   - 実用上は `gorilla/websocket` か `nhooyr.io/websocket` (最近は `coder/websocket`) を入れる必要がある
   - **ここが「標準 pkg 縛り」の唯一の破綻ポイント**
 - 上記を入れれば、SSE と同様のブロードキャスタを WebSocket 版で作れば OK
-- クライアント側: Turbo 単体では WebSocket 対応がなく、`@hotwired/turbo-rails` の `<turbo-cable-stream-source>` 相当のアダプタが必要 (自前で 30 行くらい書ける)
+- クライアント側: **Turbo 8 の `<turbo-stream-source>` が `ws://` / `wss://` URL を自動で WebSocket 接続として扱う**ので追加アダプタは不要。`<turbo-stream-source src="ws://.../events">` と置くだけで動く (sample-todo で検証済み)
+  - 補足: turbo-rails の `<turbo-cable-stream-source>` は ActionCable のチャンネル/ルーム/認証をラップした専用要素で、Rails × ActionCable 統合が必要なときに使う。素の WebSocket なら不要
 
 ### 5-6. Stimulus (フロント挙動)
 - **サーバー側で必要なもの: なし**
