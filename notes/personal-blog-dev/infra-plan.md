@@ -26,6 +26,7 @@
 | AI 要約 | **Vertex AI Gemini 2.5 Flash-Lite** | **IAM 認証で API key 不要**。Cloud Run の SA に `roles/aiplatform.user` を付与するだけ。料金は個人ブログ規模で年 1 円レベル |
 | Domain | **Cloudflare Registrar** で新規取得 | 卸売価格 (マージン無し)。DNS も同 Zone で管理 |
 | CI/CD | **GitHub Actions + Workload Identity Federation (WIF)** | PR で自動テスト、**deploy は `workflow_dispatch` で手動発火** (Actions タブのボタン)。短命 credential で GCP へ deploy し long-lived key を GitHub Secret に置かない |
+| 定期バッチ | **Cloud Run Jobs + Cloud Scheduler** | analytics 日次 rollup + raw event 削除。Cloud Run Jobs は Cloud Run always-free 枠を共有 (無料)、Cloud Scheduler も 3 job まで無料。web service とは image は共通、entrypoint を分けて責務分離 |
 | Terraform state | **GCS bucket + object versioning** | bootstrap のみ手動、以降は Terraform 管理 |
 
 ### 不採用にした選択肢と理由 (短く)
@@ -84,6 +85,29 @@ flowchart LR
     CR -->|commit| GH
 ```
 
+### 定期バッチ (Cloud Run Jobs)
+
+日次 rollup + raw event 削除は **Cloud Run Jobs で別プロセス**として実行。web service とは image は共有 (entrypoint 切り替え) で CI 簡素、責務は分離。
+
+```mermaid
+flowchart LR
+    CS["Cloud Scheduler<br/>0 3 * * * JST"]
+    subgraph GCPBatch[GCP asia-northeast1]
+        JOB["Cloud Run Job<br/>daily-rollup<br/>(image = web と共有)"]
+    end
+    subgraph NEON2[Neon]
+        PG2[(Postgres)]
+    end
+
+    CS -->|"POST .../jobs/daily-rollup:run<br/>+ OAuth token"| JOB
+    JOB -->|"UPSERT rollup<br/>+ DELETE raw (30日超)"| PG2
+```
+
+- Cloud Run Jobs: **Cloud Run と同じ always-free 枠を共有** (無料)
+- Cloud Scheduler: 3 job まで無料 (使うのは 1 job)
+- retry / timeout は Job resource 側で宣言 (`max_retries = 3`, `timeout = 300s`)
+- 追加バッチ (crosspost 一括再送、記事一括 re-summarize 等) が必要になれば `cmd/xxx/main.go` を足すだけで同じパターンで拡張可能
+
 ### CI/CD フロー
 
 deploy は自動ではなく **GitHub Actions タブから手動発火 (`workflow_dispatch`)**。
@@ -123,7 +147,8 @@ flowchart TB
         G5[google_project_iam_member<br/>aiplatform.user 等]
         G6[google_iam_workload_identity_pool<br/>+ provider]
         G7[google_storage_bucket<br/>tfstate]
-        G8[google_cloud_scheduler_job<br/>rollup batch]
+        G8[google_cloud_run_v2_job<br/>daily-rollup]
+        G9[google_cloud_scheduler_job<br/>trigger daily-rollup]
     end
     subgraph TFCF[cloudflare/cloudflare]
         C1[cloudflare_zone]
@@ -157,7 +182,9 @@ personal-blog/
 │   │   │   └── terraform.tfvars
 │   │   └── prod/
 │   ├── modules/
-│   │   ├── cloudrun/           # Cloud Run + SA + IAM
+│   │   ├── cloudrun/           # Cloud Run Service + SA + IAM
+│   │   ├── cloudrun_job/       # Cloud Run Job (daily-rollup) + SA
+│   │   ├── scheduler/          # Cloud Scheduler → Cloud Run Job trigger
 │   │   ├── artifact_registry/
 │   │   ├── secret_manager/     # secret 定義のみ (値は手動 or CI)
 │   │   ├── wif/                # Workload Identity Federation
@@ -169,7 +196,7 @@ personal-blog/
 ├── .github/workflows/
 │   ├── ci.yml                  # on: pull_request → tf plan + go test
 │   └── deploy.yml              # on: workflow_dispatch → build push deploy + tf apply
-└── Dockerfile                  # multi-stage: go build → distroless
+└── Dockerfile                  # multi-stage build: 1 image に server / rollup を同梱、Service と Job で args (entrypoint) を切替
 ```
 
 ## Secret Manager に入れるもの
@@ -194,7 +221,7 @@ personal-blog/
 - Neon リージョン最終決定 (Singapore で立ち上げ、性能を見て判断)
 - Cloudflare cache tag の設計粒度
 - WebAuthn の RP ID (ドメイン取得後に確定)
-- 分析イベントの保持期間 (default 30 日想定 → 使いながら調整)
+- 分析 raw event の保持期間: **30 日で確定** (Cloud Run Job daily-rollup で `DELETE FROM page_visits WHERE visited_at < now() - interval '30 days'` を実行、rollup テーブルに永続集計)
 
 ## 検証手順 (インフラ層)
 
@@ -206,4 +233,5 @@ personal-blog/
 6. R2 に aws-sdk-go-v2 で PutObject → 公開 URL で GET できる
 7. Cloud Run の SA から Vertex AI Gemini 呼び出しが **環境変数の API key 無しで** 成功する
 8. Actions タブから `deploy.yml` を手動発火 → WIF 経由で Cloud Run revision が更新される (long-lived key を一切使わずに)
-9. `terraform destroy` → `terraform apply` を再実行しても冪等に元の構成へ戻る
+9. Cloud Scheduler が Cloud Run Job (`daily-rollup`) を叩き、Job execution が成功する (rollup テーブル更新 + 期限切れ raw event 削除を Neon 側で確認)
+10. `terraform destroy` → `terraform apply` を再実行しても冪等に元の構成へ戻る
